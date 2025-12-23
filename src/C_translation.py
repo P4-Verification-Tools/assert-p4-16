@@ -20,6 +20,15 @@ globalDeclarations = ""
 finalAssertions = "assert_error(char msg[]) {\n\tprintf(\"Assertion Error: %s\", msg);\n\tklee_abort();\n}\n\nvoid end_assertions(){\n"
 emitHeadersAssertions = []
 extractHeadersAssertions = []
+declaredGlobals = set()  # Track declared global variables to prevent duplicates
+
+def addGlobalDeclaration(varName, declaration):
+    """Add a global declaration only if not already declared."""
+    global globalDeclarations, declaredGlobals
+    if varName not in declaredGlobals:
+        declaredGlobals.add(varName)
+        globalDeclarations += declaration
+
 
 def remove_unecessary_extract_aux_vars(lines):
     returnString = ""
@@ -45,7 +54,19 @@ def run(node, rules):
     if rules:
         global forwardingRules
         forwardingRules = rules
-    returnString = "#define BITSLICE(x, a, b) ((x) >> (b)) & ((1 << ((a)-(b)+1)) - 1)\n#include<stdio.h>\n#include<stdint.h>\n#include<stdlib.h>\n#include<assert.h>\n\nint assert_forward = 1;\nint action_run;\n\nvoid end_assertions();\n\n"
+    # KLEE and checksum function stubs to avoid implicit declaration warnings
+    stubs = """
+// KLEE function stubs
+void klee_make_symbolic(void *addr, unsigned long nbytes, const char *name);
+void klee_abort(void);
+void klee_assume(int condition);
+void klee_print_once(int id, const char *msg);
+
+// Checksum function stubs (no-op for verification)
+void verify_checksum(void) {}
+void update_checksum(void) {}
+"""
+    returnString = "#define BITSLICE(x, a, b) ((x) >> (b)) & ((1 << ((a)-(b)+1)) - 1)\n#include<stdio.h>\n#include<stdint.h>\n#include<stdlib.h>\n#include<assert.h>\n" + stubs + "\nint assert_forward = 1;\nint action_run;\n\nvoid end_assertions();\n\n"
     program = toC(node)
     returnString += globalDeclarations
     for declaration in forwardDeclarations:
@@ -209,8 +230,7 @@ def assertion(assertionString, nodeID):
         left = equalityParameters[0]
         right = equalityParameters[1]
         globalVarName =  left.replace(".", "_")[:-1] + "_eq_" + right.replace(".", "_")[-1:] + "_" + str(nodeID)
-        global globalDeclarations
-        globalDeclarations += "\n int " + globalVarName + ";\n"
+        addGlobalDeclaration(globalVarName, "\n int " + globalVarName + ";\n")
         logicalExpression = globalVarName
         returnString += globalVarName + " = (" + left + " == " + right + ");\n\t"
     elif "<" in assertionString:
@@ -218,39 +238,34 @@ def assertion(assertionString, nodeID):
         left = equalityParameters[0]
         right = equalityParameters[1]
         globalVarName =  left.replace(".", "_")[:-1] + "_le_" + right.replace(".", "_")[-1:] + "_" + str(nodeID)
-        global globalDeclarations
-        globalDeclarations += "\n int " + globalVarName + ";\n"
+        addGlobalDeclaration(globalVarName, "\n int " + globalVarName + ";\n")
         logicalExpression = globalVarName
         returnString += globalVarName + " = (" + left + " < " + right + ");\n\t"
     elif "constant" in assertionString:
         constantVariable = assertionString[assertionString.find("(")+1:assertionString.rfind(")")]
         globalVarName = "constant_" + constantVariable.replace(".", "_") + "_" + str(nodeID)
         constantType = "uint64_t"#TODO: get proper field type
-        global globalDeclarations
-        globalDeclarations += "\n" + constantType + " " + globalVarName + ";\n"
+        addGlobalDeclaration(globalVarName, "\n" + constantType + " " + globalVarName + ";\n")
         logicalExpression =  globalVarName + " == " + constantVariable
         returnString += globalVarName + " = " + constantVariable + ";"
     elif "extract" in assertionString: #TODO: assign variable to true when extract field in model
         headerToExtract = assertionString[assertionString.find("(")+1:assertionString.rfind(")")].replace(".", "_")
         globalVarName = "extract_header_" + headerToExtract
-        global globalDeclarations
-        globalDeclarations += "\nint " + globalVarName + " = 0;\n"
+        addGlobalDeclaration(globalVarName, "\nint " + globalVarName + " = 0;\n")
         logicalExpression =  globalVarName
     elif "emit" in assertionString:
         headerToEmit = assertionString[assertionString.find("(")+1:assertionString.rfind(")")].replace(".", "_")
         headerToEmitNoHeaderStack = headerToEmit.replace("[", "").replace("]", "")
         globalVarName = "emit_header_" + headerToEmitNoHeaderStack
         emitHeadersAssertions.append(headerToEmit)
-        global globalDeclarations
-        globalDeclarations += "\nint " + globalVarName + " = 0;\n"
+        addGlobalDeclaration(globalVarName, "\nint " + globalVarName + " = 0;\n")
         logicalExpression = globalVarName
     elif "forward" in assertionString:
         logicalExpression = "assert_forward"
     elif "traverse" in assertionString:
         #traverseParameter = assertionString[assertionString.find("(")+1:assertionString.rfind(")")]
         globalVarName = "traverse_" + str(nodeID)
-        global globalDeclarations
-        globalDeclarations += "int " + globalVarName + " = 0;\n"
+        addGlobalDeclaration(globalVarName, "int " + globalVarName + " = 0;\n")
         logicalExpression = globalVarName
         #if traverseParameter:
         #    #TODO: add globalVarName + " = 1;" to the parameter location
@@ -259,8 +274,7 @@ def assertion(assertionString, nodeID):
         returnString += globalVarName + " = 1;"
     else:
         globalVarName = assertionString.replace(".", "_") + "_" + str(nodeID)
-        global globalDeclarations
-        globalDeclarations += "\nint " + globalVarName + ";\n"
+        addGlobalDeclaration(globalVarName, "\nint " + globalVarName + ";\n")
         returnString += globalVarName + " = (" + assertionString + " == 1);\n\t"
         logicalExpression = globalVarName
     return (returnString, logicalExpression)
@@ -424,6 +438,9 @@ def MethodCallExpression(node):
      #SetInvalid method
     elif hasattr(node.method, 'member') and node.method.member == "setInvalid":
         returnString += toC(node.method.expr) + ".isValid = 0;"
+    #isValid method - returns struct field access (not a function call)
+    elif hasattr(node.method, 'member') and node.method.member == "isValid":
+        returnString += toC(node.method.expr) + ".isValid"
     elif hasattr(node.method, 'path') and node.method.path.name == "random":
         field = toC(node.arguments.vec[0])
         returnString += "//random\n\t"
@@ -432,6 +449,11 @@ def MethodCallExpression(node):
         upperBound = toC(node.arguments.vec[2])
         returnString += "\n\tklee_assume(" + field + " > " + lowerBound + " && " + field + " < " + upperBound + ");"
     elif hasattr(node.method, 'path') and node.method.path.name == "digest":
+        pass
+    # Checksum externs - no-op, stubs defined in header
+    elif hasattr(node.method, 'path') and node.method.path.name == "verify_checksum":
+        pass
+    elif hasattr(node.method, 'path') and node.method.path.name == "update_checksum":
         pass
     else:
         returnString = toC(node.method) + "();"

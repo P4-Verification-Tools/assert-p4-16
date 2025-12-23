@@ -16,3 +16,6 @@ There are 4 different benchmarks: Tables, Actions, Rules, and Assertions. Each o
 
 Each case study folder contains the used C models and scripts to execute them. You can also find C models with constraint optimizations, submodels for parallelization, and their combination. The run\_klee.sh scripts are used to execute the single threaded models, and the parallel\_klee.sh scripts are used to run the submodels concurrently. 
 
+## P4-16 Support
+
+- Checksum externs (`verify_checksum`, `update_checksum`) are stubbed as no-ops since checksum correctness is not modeled in symbolic verification.
