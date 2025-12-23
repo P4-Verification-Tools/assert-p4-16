@@ -17,7 +17,7 @@ currentTable = ""
 forwardingRules = {}
 currentTableKeys = {} #keyName, (exact, lpm or ternary)
 globalDeclarations = ""
-finalAssertions = "assert_error(char msg[]) {\n\tprintf(\"Assertion Error: %s\", msg);\n\tklee_abort();\n}\n\nvoid end_assertions(){\n"
+finalAssertions = "void assert_error(char msg[]) {\n\tprintf(\"Assertion Error: %s\", msg);\n\tklee_abort();\n}\n\nvoid end_assertions(){\n"
 emitHeadersAssertions = []
 extractHeadersAssertions = []
 declaredGlobals = set()  # Track declared global variables to prevent duplicates
@@ -78,7 +78,8 @@ void update_checksum(void) {}
 def toC(node):
     # test for annotations
     returnString = ""
-    if hasattr(node, "annotations"):
+    # Skip annotation processing for P4Table - it handles its own annotations internally
+    if hasattr(node, "annotations") and node.Node_Type != "P4Table":
         returnString += Annotations(node.annotations)
     if 'Vector' in node.Node_Type:
         for v in node.vec:
@@ -370,6 +371,8 @@ def Member(node):
         nodeName = toC(node.expr)
         if nodeName in tableIDs.keys():
             return nodeName + "_" + str(tableIDs[nodeName])
+        elif nodeName in actionIDs.keys():
+            return nodeName + "_" + str(actionIDs[nodeName])
         elif nodeName in declarationTypes.keys():
             return declarationTypes[nodeName]
         else:
@@ -456,7 +459,11 @@ def MethodCallExpression(node):
     elif hasattr(node.method, 'path') and node.method.path.name == "update_checksum":
         pass
     else:
-        returnString = toC(node.method) + "();"
+        methodName = toC(node.method)
+        # Check if this is a direct action call - action names need the _nodeID suffix
+        if hasattr(node.method, 'path') and node.method.path.name in actionIDs:
+            methodName = node.method.path.name + "_" + str(actionIDs[node.method.path.name])
+        returnString = methodName + "();"
     return returnString
 
 def MethodCallStatement(node):
@@ -496,13 +503,20 @@ def P4Table(node):
     global currentTable
     currentTable = node.name
     forwardDeclarations.add(node.name + "_" + str(node.Node_ID))
+    
+    # Process table annotations first - they should be inside the function body
+    annotationCode = ""
+    if hasattr(node, "annotations"):
+        annotationCode = Annotations(node.annotations)
+    
     tableBody = toC(node.properties)
     if forwardingRules:
         tableBody = actionListWithRules(node)
     global currentTableKeys
     currentTableKeys = {}
     tableName = node.name + "_" + str(node.Node_ID)
-    return "//Table\nvoid " + tableName + "() {\n" + tableBody + "\n}\n\n"
+    # Put annotation code at the START of the function body
+    return "//Table\nvoid " + tableName + "() {\n" + annotationCode + tableBody + "\n}\n\n"
 
 def ParameterList(node):
     returnString = ""
