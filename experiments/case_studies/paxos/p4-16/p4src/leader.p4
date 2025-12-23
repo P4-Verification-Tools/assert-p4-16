@@ -11,7 +11,7 @@ control ingress(inout headers hdr, inout metadata meta, inout standard_metadata_
     }
 
     action increase_instance() {
-	@assert("if(traverse, hdr.paxos.msgtype == Phase2A)"){}
+	@assert("if(traverse, hdr.paxos.msgtype == 2)"){}
         registerInstance.read(hdr.paxos.inst, 0);
         hdr.paxos.inst = hdr.paxos.inst + 1;
         registerInstance.write(0, hdr.paxos.inst);
