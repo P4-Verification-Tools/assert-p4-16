@@ -19,9 +19,3 @@ Each case study folder contains the used C models and scripts to execute them. Y
 ## P4-16 Support
 
 - Checksum externs (`verify_checksum`, `update_checksum`) are stubbed as no-ops since checksum correctness is not modeled in symbolic verification.
-
-# Docker
-
-```
-docker build -t assert-p4 .
-```
