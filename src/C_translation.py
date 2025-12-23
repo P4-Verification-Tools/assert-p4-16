@@ -200,7 +200,7 @@ def Annotations(node):
             #if assert_string[1] != "":
             #    message = assert_string[1] + "\\n"
             global finalAssertions
-            finalAssertions += "\t//if(!(" + assertionResults[1] + ")) assert_error(\"" + assertionResults[1] + "\");\n"
+            finalAssertions += "\tif(!(" + assertionResults[1] + ")) assert_error(\"" + assertionResults[1] + "\");\n"
     return returnString
 
 def assertion(assertionString, nodeID):
@@ -210,7 +210,13 @@ def assertion(assertionString, nodeID):
     if "!" == assertionString[0]:
         neg = assertion(assertionString[1:], nodeID)
         returnString += neg[0]
-        logicalExpression = "!" + neg[1]
+        logicalExpression = "!(" + neg[1] + ")"
+    elif assertionString.startswith("(") and assertionString.endswith(")"):
+        # Strip outer parentheses and recurse
+        inner = assertionString[1:-1]
+        result = assertion(inner, nodeID)
+        returnString += result[0]
+        logicalExpression = result[1]
     elif "if(" == assertionString[:3]: #TODO: finish this
         ifExpression = assertionString[assertionString.find("(")+1:assertionString.rfind(")")]
         ifParameters = re.split(r',\s*(?![^()]*\))', ifExpression)
@@ -226,6 +232,13 @@ def assertion(assertionString, nodeID):
         returnString += left[0]
         returnString += right[0]
         logicalExpression = "(" + left[1] + ") && (" + right[1] + ")"
+    elif "||" in assertionString:
+        orParameters = assertionString.split(" || ")
+        left = assertion(orParameters[0], nodeID)
+        right = assertion(orParameters[1], nodeID)
+        returnString += left[0]
+        returnString += right[0]
+        logicalExpression = "(" + left[1] + ") || (" + right[1] + ")"
     elif "==" in assertionString:
         equalityParameters = assertionString.split("==")
         left = equalityParameters[0]
